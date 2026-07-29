@@ -3,9 +3,10 @@
 // Daemon: единственный процесс с одним LockManager, слушает на Unix socket.
 // Все peer-агенты подключаются к этому процессу → lock state разделяется.
 //
-// Запуск:  iwe-local-gateway-daemon &
-// Стоп:    kill $(cat ~/.iwe/gateway.pid)   или   SIGTERM / Ctrl-C
-// Socket:  ~/.iwe/gateway.sock  (переопределяется через IWE_GATEWAY_SOCKET)
+// Start: iwe-local-gateway-daemon &
+// Stop:  kill $(cat <dirname(SOCKET_PATH)>/gateway.pid)   or   SIGTERM / Ctrl-C
+// Socket: ~/.iwe/gateway.sock by default, overridden via IWE_GATEWAY_SOCKET
+//         (the pid file always lives next to the socket, see daemon-paths.ts)
 
 import net from "node:net";
 import fs from "node:fs";
@@ -18,11 +19,13 @@ import { PeerStatusManager } from "./peer-status-manager.js";
 import { metrics } from "./metrics-manager.js";
 import { registerTools } from "./tools.js";
 import { SocketTransport } from "./socket-transport.js";
+import { resolveDaemonPaths } from "./daemon-paths.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
-const SOCKET_DIR = path.join(os.homedir(), ".iwe");
-const SOCKET_PATH = process.env.IWE_GATEWAY_SOCKET ?? path.join(SOCKET_DIR, "gateway.sock");
-const PID_PATH = path.join(SOCKET_DIR, "gateway.pid");
+const { socketPath: SOCKET_PATH, pidPath: PID_PATH } = resolveDaemonPaths(
+  process.env.IWE_GATEWAY_SOCKET,
+  os.homedir(),
+);
 
 // Shared state across all connected agents.
 const sharedLocks = new LockManager();
@@ -35,9 +38,26 @@ sharedLocks.onExpiry = (file) => metrics.recordRelease(file);
 sharedLocks.onTtlTakeover = (file, previousHolder, newHolder) =>
   metrics.recordTtlTakeover(file, previousHolder.holder, newHolder);
 
-fs.mkdirSync(SOCKET_DIR, { recursive: true });
+fs.mkdirSync(path.dirname(SOCKET_PATH), { recursive: true });
 
-// Remove stale socket from previous run.
+// A live process on the other end of an existing socket file means a second
+// daemon is racing to start on the same path — unlinking it would split-brain
+// two independent LockManagers (issues/1). A stale file from a previous run
+// has no listener, so the connect attempt fails and we fall through to unlink.
+await new Promise<void>((resolve) => {
+  const probe = net.connect(SOCKET_PATH);
+  const fail = () => { probe.destroy(); resolve(); };
+  probe.setTimeout(300, fail);
+  probe.once("error", fail);
+  probe.once("connect", () => {
+    probe.destroy();
+    process.stderr.write(
+      `[iwe-local-gateway] refusing to start: a live daemon already listens on ${SOCKET_PATH}\n`,
+    );
+    process.exit(1);
+  });
+});
+
 try { fs.unlinkSync(SOCKET_PATH); } catch { /* not present — fine */ }
 
 let activeConnections = 0;
