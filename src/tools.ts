@@ -11,6 +11,11 @@ import type { LockManager } from "./lock-manager.js";
 import type { PeerStatusManager } from "./peer-status-manager.js";
 import type { metrics as MetricsAPI } from "./metrics-manager.js";
 
+// Держать в синхроне с package.json version при релизе — позволяет пилоту
+// и агенту увидеть через gateway_status, что демон отстал от установленного
+// пина после апдейта setup-local-gateway.sh (Fable 5 review, Д1, WP-499 Ф16).
+export const GATEWAY_VERSION = "0.1.0";
+
 const acquireSchema = z.object({
   file: z.string().min(1, "file required"),
   ttl_seconds: z.number().int().positive().max(3600).optional(),
@@ -121,7 +126,7 @@ export function registerTools(
     const agentId = getAgentId();
 
     if (name === "gateway_status") {
-      return text({ agent_id: agentId, ...lockManager.status() });
+      return text({ agent_id: agentId, gateway_version: GATEWAY_VERSION, ...lockManager.status() });
     }
 
     if (name === "acquire_file_lock") {
