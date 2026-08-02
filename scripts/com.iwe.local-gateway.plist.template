@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.iwe.local-gateway</string>
+
+    <!-- Run the daemon directly, NOT through start-daemon.sh: that script
+         backgrounds the process with nohup and exits, so launchd would see an
+         immediate exit and restart it forever. launchd supervises the process
+         itself instead. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>__NODE_BIN__</string>
+        <string>__GATEWAY_DIR__/dist/daemon.js</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- A second daemon cannot corrupt state: daemon.js refuses to unlink a
+         live socket and exits non-zero. Throttling keeps that failure quiet
+         instead of hot-looping. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.iwe/gateway-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.iwe/gateway-launchd.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
