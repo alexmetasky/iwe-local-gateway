@@ -22,6 +22,17 @@ import { SocketTransport } from "./socket-transport.js";
 import { resolveDaemonPaths } from "./daemon-paths.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
+// Lifecycle events used to go to stderr with no timestamp, so the launchd
+// stderr file grew into a megabyte of "connected/disconnected" lines that
+// looked like a fault stream and could not answer "when" (WP-499, 2026-08-03).
+// Info goes to stdout, only real faults to stderr, both timestamped.
+function logInfo(message: string): void {
+  process.stdout.write(`${new Date().toISOString()} [iwe-local-gateway] ${message}\n`);
+}
+function logError(message: string): void {
+  process.stderr.write(`${new Date().toISOString()} [iwe-local-gateway] ${message}\n`);
+}
+
 const { socketPath: SOCKET_PATH, pidPath: PID_PATH } = resolveDaemonPaths(
   process.env.IWE_GATEWAY_SOCKET,
   os.homedir(),
@@ -51,9 +62,7 @@ await new Promise<void>((resolve) => {
   probe.once("error", fail);
   probe.once("connect", () => {
     probe.destroy();
-    process.stderr.write(
-      `[iwe-local-gateway] refusing to start: a live daemon already listens on ${SOCKET_PATH}\n`,
-    );
+    logError(`refusing to start: a live daemon already listens on ${SOCKET_PATH}`);
     process.exit(1);
   });
 });
@@ -90,7 +99,7 @@ const netServer = net.createServer(async (socket) => {
             const m = msg as { method?: string; params?: { clientInfo?: { name?: string } } };
             if (m.method === "initialize" && m.params?.clientInfo?.name) {
               agentId = m.params.clientInfo.name;
-              process.stderr.write(`[iwe-local-gateway] agent connected: ${agentId}\n`);
+              logInfo(`agent connected: ${agentId}`);
             }
             fn(msg);
           }
@@ -108,7 +117,7 @@ const netServer = net.createServer(async (socket) => {
     activeConnections = Math.max(0, activeConnections - 1);
     sharedPeerStatus.remove(agentId);
     metrics.setActiveAgents(activeConnections);
-    process.stderr.write(`[iwe-local-gateway] agent disconnected: ${agentId}\n`);
+    logInfo(`agent disconnected: ${agentId}`);
   };
 });
 
@@ -120,9 +129,7 @@ netServer.listen(SOCKET_PATH, () => {
   // (ВЫ-9, spoofable clientInfo.name) is a separate, unresolved design
   // question — this only closes the cross-OS-user vector.
   fs.chmodSync(SOCKET_PATH, 0o600);
-  process.stderr.write(
-    `[iwe-local-gateway] daemon started pid=${process.pid} socket=${SOCKET_PATH}\n`,
-  );
+  logInfo(`daemon started pid=${process.pid} socket=${SOCKET_PATH}`);
 });
 
 fs.writeFileSync(PID_PATH, String(process.pid), "utf8");
